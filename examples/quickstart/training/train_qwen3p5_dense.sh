@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -xeuo pipefail
 
-project_name=${PROJECT_NAME:-"Uni-Agent-Qwen3.5-4B-megatron"}
+project_name=${PROJECT_NAME:-"Uni-Agent-Qwen3-4B-megatron"}
 exp_name=${EXP_NAME:-"$(date +%Y%m%d%H)_exp"}
 
-MODEL_PATH=${MODEL_PATH:-"${DATA_DIR}/models/Qwen3.5-4B"}
+MODEL_PATH=${MODEL_PATH:-"${DATA_DIR}/models/Qwen3-4B"}
 TRAIN_FILE=${TRAIN_FILE:-"${DATA_DIR}/data/uni_agent/swe_rebench_filtered_1150.parquet"}
 TEST_FILE=${TEST_FILE:-"${DATA_DIR}/data/uni_agent/swe_bench_verified.parquet"}
 
@@ -101,6 +101,59 @@ rollout_is_batch_normalize=${ROLLOUT_IS_BATCH_NORMALIZE:-False}  # normalize IS 
 rollout_rs=${ROLLOUT_RS:-null}                                   # no rejection sampling
 rollout_rs_threshold=${ROLLOUT_RS_THRESHOLD:-null}
 
+SINGLE_NODE=${SINGLE_NODE:-true}
+
+if [[ "$SINGLE_NODE" == "true" ]]; then
+  gen_tp=${GEN_TP:-1}
+  train_tp=${TP:-1}
+  train_cp=${CP:-1}
+  optimizer_offload_fraction=${OFFLOAD_FRACTION:-0}
+  NNODES=${NNODES:-1}
+  NGPUS_PER_NODE=${NGPUS_PER_NODE:-1}
+  use_dynamic_bsz=${USE_DYNAMIC_BSZ:-False}
+  overlap_cpu_optimizer_d2h_h2d=False
+  optimizer_cpu_offload=False
+  gradient_accumulation_fusion=False
+  agent_num_workers=1
+  gpu_memory_utilization=0.2
+  free_cache_engine=False
+  total_epochs=1
+
+  NNODES=${NNODES:-1}
+  NGPUS_PER_NODE=${NGPUS_PER_NODE:-1}
+
+  train_cp=${CP:-1}
+  gen_tp=${GEN_TP:-1}
+  train_tp=${TP:-1}
+
+  EXTRA_ARGS=(
+    "++transfer_queue.backend.SimpleStorage.num_data_storage_units=1"
+    "actor_rollout_ref.model.use_remove_padding=False"
+    "actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1"
+    "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1"
+    "actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1"
+    "reward.num_workers=1"
+  )
+else
+  gen_tp=${GEN_TP:-2}
+  train_tp=${TP:-4}
+  train_cp=${CP:-2}
+  optimizer_offload_fraction=${OFFLOAD_FRACTION:-1.0}
+  NNODES=${NNODES:-8}
+  NGPUS_PER_NODE=${NGPUS_PER_NODE:-8}
+  use_dynamic_bsz=${USE_DYNAMIC_BSZ:-True}
+  overlap_cpu_optimizer_d2h_h2d=True
+  optimizer_cpu_offload=True
+  gradient_accumulation_fusion=True
+  agent_num_workers=8
+  gpu_memory_utilization=0.7
+  free_cache_engine=True
+  total_epochs=10
+
+  EXTRA_ARGS=()
+fi
+
+
 ray job submit --no-wait --runtime-env $RUNTIME_ENV \
     -- python3 -m verl.trainer.main_ppo \
     --config-name=ppo_megatron_trainer \
@@ -138,9 +191,9 @@ ray job submit --no-wait --runtime-env $RUNTIME_ENV \
     actor_rollout_ref.actor.optim.weight_decay=0.1 \
     actor_rollout_ref.actor.optim.lr_decay_steps=${lr_decay_steps} \
     +actor_rollout_ref.actor.optim.override_optimizer_config.optimizer_offload_fraction=${optimizer_offload_fraction} \
-    +actor_rollout_ref.actor.optim.override_optimizer_config.overlap_cpu_optimizer_d2h_h2d=True \
+    +actor_rollout_ref.actor.optim.override_optimizer_config.overlap_cpu_optimizer_d2h_h2d=${overlap_cpu_optimizer_d2h_h2d} \
     +actor_rollout_ref.actor.optim.override_optimizer_config.use_precision_aware_optimizer=True \
-    +actor_rollout_ref.actor.optim.override_optimizer_config.optimizer_cpu_offload=True \
+    +actor_rollout_ref.actor.optim.override_optimizer_config.optimizer_cpu_offload=${optimizer_cpu_offload:-True} \
     actor_rollout_ref.actor.megatron.use_mbridge=$USE_MBRIDGE \
     actor_rollout_ref.actor.megatron.use_dist_checkpointing=$USE_DIST_CKPT \
     actor_rollout_ref.actor.megatron.param_offload=${offload} \
@@ -153,7 +206,7 @@ ray job submit --no-wait --runtime-env $RUNTIME_ENV \
     +actor_rollout_ref.actor.megatron.override_transformer_config.masked_softmax_fusion=True \
     +actor_rollout_ref.actor.megatron.override_transformer_config.bias_activation_fusion=True \
     +actor_rollout_ref.actor.megatron.override_transformer_config.bias_dropout_fusion=True \
-    +actor_rollout_ref.actor.megatron.override_transformer_config.gradient_accumulation_fusion=True \
+    +actor_rollout_ref.actor.megatron.override_transformer_config.gradient_accumulation_fusion=${gradient_accumulation_fusion:-True} \
     +actor_rollout_ref.actor.megatron.override_transformer_config.deallocate_pipeline_outputs=True \
     +actor_rollout_ref.actor.megatron.override_transformer_config.persist_layer_norm=True \
     +actor_rollout_ref.actor.megatron.override_transformer_config.recompute_method=uniform \
@@ -180,7 +233,7 @@ ray job submit --no-wait --runtime-env $RUNTIME_ENV \
     actor_rollout_ref.rollout.multi_turn.enable=True \
     actor_rollout_ref.rollout.multi_turn.max_parallel_calls=1 \
     ++actor_rollout_ref.rollout.multi_turn.format=${TOOL_PARSER} \
-    actor_rollout_ref.rollout.agent.num_workers=8 \
+    actor_rollout_ref.rollout.agent.num_workers=${agent_num_workers} \
     ++actor_rollout_ref.rollout.agent.agent_loop_manager_class=uni_agent.framework.entry.AgentFrameworkRolloutAdapter \
     ++actor_rollout_ref.rollout.custom.agent_framework.gateway_count=${GATEWAY_COUNT} \
     ++actor_rollout_ref.rollout.custom.agent_framework.log_dir=${AGENT_LOG_DIR} \
@@ -192,7 +245,7 @@ ray job submit --no-wait --runtime-env $RUNTIME_ENV \
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.model_name=${SERVED_MODEL_NAME} \
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.report_reward=True \
     ++actor_rollout_ref.rollout.custom.agent_framework.use_reward_loop_worker=False \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=${gpu_memory_utilization} \
     actor_rollout_ref.rollout.tensor_model_parallel_size=${gen_tp} \
     actor_rollout_ref.rollout.prompt_length=${max_prompt_length} \
     actor_rollout_ref.rollout.response_length=${max_response_length} \
@@ -212,7 +265,7 @@ ray job submit --no-wait --runtime-env $RUNTIME_ENV \
     actor_rollout_ref.rollout.calculate_log_probs=True \
     actor_rollout_ref.nccl_timeout=9600 \
     actor_rollout_ref.rollout.enforce_eager=False \
-    actor_rollout_ref.rollout.free_cache_engine=True \
+    actor_rollout_ref.rollout.free_cache_engine=${free_cache_engine:-True} \
     actor_rollout_ref.ref.log_prob_max_token_len_per_gpu=${infer_ppo_max_token_len} \
     actor_rollout_ref.ref.megatron.use_dist_checkpointing=${USE_DIST_CKPT} \
     actor_rollout_ref.ref.megatron.param_offload=${offload} \
@@ -230,10 +283,11 @@ ray job submit --no-wait --runtime-env $RUNTIME_ENV \
     trainer.experiment_name="${exp_name}" \
     trainer.val_before_train=False \
     trainer.save_freq=10 \
-    trainer.total_epochs=10 \
+    trainer.total_epochs=${total_epochs} \
     trainer.resume_mode=auto \
     trainer.log_val_generations=10 \
     trainer.default_local_dir="${CKPTS_DIR}" \
     trainer.nnodes="${NNODES}" \
     trainer.n_gpus_per_node="${NGPUS_PER_NODE}" \
-    trainer.test_freq="${test_freq}"
+    trainer.test_freq="${test_freq}" \
+    "${EXTRA_ARGS[@]}"
