@@ -1,6 +1,6 @@
 - name: swe_bench
   sandbox:
-    provider: vefaas
+    provider: modal
     runtime_timeout: 7200
   agent:
     name: claude_code
@@ -13,7 +13,7 @@
 
 - name: swe_rebench
   sandbox:
-    provider: vefaas
+    provider: modal
     runtime_timeout: 7200
   agent:
     name: claude_code
