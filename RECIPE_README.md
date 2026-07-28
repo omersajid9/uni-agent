@@ -3,6 +3,11 @@
 bash ./setup_env.sh
 ```
 
+## Activate environment
+```
+conda activate uniagent
+```
+
 ## Bring up ray
 ```
 ray start --head --port=6379 --dashboard-host=0.0.0.0 --num-cpus=9 --num-gpus=1 --include-dashboard=true
