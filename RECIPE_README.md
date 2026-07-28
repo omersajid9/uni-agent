@@ -1,6 +1,6 @@
 ## Environment setup
 ```
-bash ./setup_environment.sh
+bash ./setup_env.sh
 ```
 
 ## Bring up ray
