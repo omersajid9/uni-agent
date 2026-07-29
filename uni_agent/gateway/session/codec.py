@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
@@ -92,7 +93,47 @@ def _process_tool_calls_vllm(
     return parsed.content or "", [tool_call.function for tool_call in parsed.tool_calls]
 
 
-def _extract_tool_calls_with_sglang_or_vllm(
+def _process_tool_calls_hermes(text: str, tools: list[dict[str, Any]]) -> tuple[str, list[Any]]:
+    """Parse the Hermes ``<tool_call>{json}</tool_call>`` envelope with no inference engine.
+
+    The only parser here that has no third-party dependency, which is what makes it the fallback
+    rather than an alternative: neither vLLM nor SGLang installs on every accelerator (AWS Neuron
+    has neither), and without a parser the gateway hands the agent an assistant message whose tool
+    call is still sitting in ``content`` -- the loop then reads "no tool calls" and ends the episode
+    after one turn instead of failing, which is the kind of silence that looks like a bad policy.
+
+    Deliberately narrow: exactly the Qwen chat template's envelope, and a call naming a tool that
+    was not offered is dropped rather than passed on.
+    """
+    offered = {
+        (tool.get("function") or {}).get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
+        for tool in tools
+    }
+    calls = []
+    for match in re.finditer(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", text, re.DOTALL):
+        try:
+            payload = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            logger.warning("hermes tool-call payload is not valid JSON; skipping it")
+            continue
+        name = payload.get("name")
+        if name not in offered:
+            logger.warning("model called tool %r which was not offered; skipping it", name)
+            continue
+        calls.append(SimpleNamespace(name=name, arguments=payload.get("arguments", {})))
+    if not calls:
+        return text, []
+    # Whatever the model wrote outside the envelopes is the assistant's prose (its reasoning).
+    content = re.sub(r"<tool_call>\s*\{.*?\}\s*</tool_call>", "", text, flags=re.DOTALL).strip()
+    return content, calls
+
+
+#: Parsers that need no inference engine, keyed by the format name the config asks for. Consulted
+#: only after SGLang and vLLM have both turned out to be unimportable.
+_BUILTIN_TOOL_PARSERS = {"hermes": _process_tool_calls_hermes}
+
+
+def _extract_tool_calls(
     text: str,
     tools: list[dict[str, Any]],
     parser_name: str,
@@ -112,9 +153,17 @@ def _extract_tool_calls_with_sglang_or_vllm(
     except ModuleNotFoundError:
         pass
     except Exception:
-        logger.warning("vLLM tool-call parsing failed; returning raw text", exc_info=True)
+        logger.warning("vLLM tool-call parsing failed; trying the built-in parser", exc_info=True)
 
-    return text, []
+    builtin = _BUILTIN_TOOL_PARSERS.get(parser_name)
+    if builtin is None:
+        logger.warning(
+            "no tool parser available for format %r: neither SGLang nor vLLM is importable and "
+            "there is no built-in parser for it, so tool calls will stay in the message content",
+            parser_name,
+        )
+        return text, []
+    return builtin(text, tools)
 
 
 class MessageCodec:
@@ -288,7 +337,7 @@ class MessageCodec:
         """Decode model output tokens into an assistant message and finish reason."""
         if self._tool_parser_name and tools:
             response_text = self._tokenizer.decode(response_ids, skip_special_tokens=False)
-            content, function_calls = _extract_tool_calls_with_sglang_or_vllm(
+            content, function_calls = _extract_tool_calls(
                 response_text,
                 tools,
                 self._tool_parser_name,

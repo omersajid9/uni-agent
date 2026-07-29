@@ -13,9 +13,10 @@ through the :class:`~uni_agent.sandbox.SandboxBackend` data plane and returns a
         print(obs.text)                                 # `async with` starts + closes the tools
 
 Importing this package registers the built-ins in :data:`TOOL_REGISTRY`:
-``stateful_shell`` (seen by the model as ``shell``), ``str_replace_editor``, and the
-control tools ``finish`` / ``submit`` (no side effect; the ReAct loop ends the
-episode when the policy calls one -- see ``_FINISH_TOOLS``).
+``stateful_shell`` (seen by the model as ``shell``), ``str_replace_editor``,
+``calculator`` (pure arithmetic, no sandbox), and the control tools ``finish`` /
+``submit`` (no side effect; the ReAct loop ends the episode when the policy calls
+one -- see ``_FINISH_TOOLS``).
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from .base import (
 )
 
 # Built-in tools self-register on import; keep these imports for that side effect.
-from . import edit_file, finish, shell, submit  # noqa: F401
+from . import calculator, edit_file, finish, shell, submit  # noqa: F401
 
 __all__ = [
     "Tool",
