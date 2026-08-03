@@ -1,6 +1,8 @@
 [submodule "verl"]
 	path = verl
-	url = https://github.com/volcengine/verl.git
-[submodule "mini-verl"]
 	branch = main
-	url = https://github.com/czkkkkkk/mini-ver.git
+	url = git@github.com:omersajid9/verl.git
+[submodule "mini-verl"]
+	path = mini-verl
+	branch = main
+	url = git@github.com:omersajid9/mini-verl.git

@@ -295,6 +295,7 @@ class OpenAICompatibleAgentFramework(AgentFramework):
         processor=None,
         rollout_config=None,
         log_dir: str | None = None,
+        tokenizer_path: str | None = None,
     ):
         self.gateway_manager = gateway_manager
         self.runner_registry = runner_registry
@@ -311,6 +312,11 @@ class OpenAICompatibleAgentFramework(AgentFramework):
         self._runner_semaphores: dict[str, asyncio.Semaphore] = {}
         self._semaphore_loop: asyncio.AbstractEventLoop | None = None
         self._log_dir = log_dir
+        # Lazily-loaded HF tokenizer used only to render human-readable trajectory text dumps.
+        # The gateway owns the authoritative tokenizer; this is a second, decode-only copy kept on the
+        # framework worker so _dump_trajectories can write decoded text without an RPC per session.
+        self._tokenizer_path = tokenizer_path
+        self._tokenizer = None
 
     @classmethod
     def from_config(
@@ -340,6 +346,9 @@ class OpenAICompatibleAgentFramework(AgentFramework):
         if not bool(af_cfg.get("use_reward_loop_worker", True)):
             reward_loop_worker_handles = None
 
+        model_cfg = OmegaConf.select(config, "actor_rollout_ref.model", default={}) or {}
+        tokenizer_path = model_cfg.get("tokenizer") or model_cfg.get("path")
+
         return cls(
             gateway_manager=gateway_manager,
             runner_registry=runner_registry,
@@ -347,6 +356,7 @@ class OpenAICompatibleAgentFramework(AgentFramework):
             processor=processor,
             rollout_config=config.actor_rollout_ref.rollout,
             log_dir=log_dir,
+            tokenizer_path=tokenizer_path,
         )
 
     def _build_session_sampling_params(
@@ -769,8 +779,94 @@ class OpenAICompatibleAgentFramework(AgentFramework):
             buf = io.BytesIO()
             np.savez_compressed(buf, **arrays)
             (run_dir / "trajectory.npz").write_bytes(buf.getvalue())
+
+            self._write_trajectory_text(run_dir, session_id, trajectories)
         except Exception:
             logger.exception("session %s: failed to write trajectory dump under %s", session_id, run_dir)
+
+    def _get_tokenizer(self):
+        """Lazily load a decode-only HF tokenizer on the framework worker.
+
+        Returns ``None`` if no path is configured or loading fails (logged once); the text
+        dump then degrades to writing token-id runs instead of decoded strings, so a
+        tokenizer problem never aborts the rollout.
+        """
+        if self._tokenizer is not None or self._tokenizer is False:
+            return self._tokenizer or None
+        if not self._tokenizer_path:
+            self._tokenizer = False
+            return None
+        try:
+            from transformers import AutoTokenizer
+
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self._tokenizer_path, trust_remote_code=True
+            )
+            logger.info("loaded trajectory-text tokenizer from %s", self._tokenizer_path)
+            return self._tokenizer
+        except Exception:
+            logger.exception("failed to load trajectory-text tokenizer from %s", self._tokenizer_path)
+            self._tokenizer = False
+            return None
+
+    def _write_trajectory_text(
+        self, run_dir: Path, session_id: str, trajectories: list[Trajectory]
+    ) -> None:
+        """Write a human-readable ``trajectory.txt`` with the decoded prompt + response text.
+
+        The response stream interleaves model-generated tokens (``response_mask == 1``) with
+        interstitial context the gateway re-injected between turns (tool results / continuation
+        prompts, ``response_mask == 0``). Each maximal run is decoded and labelled ``[model]``
+        or ``[context]`` so the multi-turn conversation is readable end-to-end without loading
+        the ``.npz`` and decoding token ids by hand.
+        """
+        tok = self._get_tokenizer()
+        lines: list[str] = [f"session_id={session_id} num_trajectories={len(trajectories)}"]
+        for i, traj in enumerate(trajectories):
+            meta = self._trajectory_meta(traj)
+            lines.append("")
+            lines.append(
+                f"=== TRAJECTORY {i} | turns={meta['num_turns']} "
+                f"reward={meta['reward_score']} "
+                f"prompt_tokens={meta['prompt_len']} response_tokens={meta['response_len']} "
+                f"model_tokens={meta['model_token_count']} ==="
+            )
+
+            lines.append(f"--- PROMPT ({meta['prompt_len']} tokens) ---")
+            lines.append(self._decode_ids(tok, traj.prompt_ids))
+
+            lines.append(f"--- RESPONSE ({meta['response_len']} tokens) ---")
+            lines.extend(self._decode_masked_stream(tok, traj.response_ids, traj.response_mask))
+        (run_dir / "trajectory.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    @staticmethod
+    def _decode_ids(tok, ids: list[int]) -> str:
+        if tok is None:
+            return f"<{len(ids)} tokens, no tokenizer: {ids[:16]}{'...' if len(ids) > 16 else ''}>"
+        text = tok.decode(ids, skip_special_tokens=False)
+        return text if text else f"<{len(ids)} tokens decoded to empty>"
+
+    @staticmethod
+    def _decode_masked_stream(tok, ids: list[int], mask: list[int]) -> list[str]:
+        """Decode response_ids split into maximal runs of model vs context tokens."""
+        out: list[str] = []
+        if not ids:
+            return ["<empty response>"]
+        i = 0
+        n = len(ids)
+        while i < n:
+            tag = 1 if mask[i] else 0
+            j = i
+            while j < n and (1 if mask[j] else 0) == tag:
+                j += 1
+            label = "model" if tag else "context"
+            if tok is None:
+                out.append(f"[{label}] <{j - i} tokens: {ids[i:i + 16]}{'...' if j - i > 16 else ''}>")
+            else:
+                seg = tok.decode(ids[i:j], skip_special_tokens=False)
+                out.append(f"[{label}] {seg}" if seg else f"[{label}] <{j - i} tokens decoded to empty>")
+            i = j
+        return out
 
     def _trajectory_meta(self, traj: Trajectory) -> dict[str, object]:
         """Small, human-readable per-trajectory summary; the token arrays live in the npz."""

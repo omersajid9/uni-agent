@@ -1,0 +1,10 @@
+working_dir: ./
+excludes:
+  - "/.git/"
+
+env_vars:
+  PYTHONUNBUFFERED: "1"
+  RAY_DEDUP_LOGS: "1"
+  TQ_NUM_THREADS: "6"
+  NEURON_LAUNCH_BLOCKING: "0"
+  TORCH_NEURONX_ENABLE_LAZY_ALLOC: "1"

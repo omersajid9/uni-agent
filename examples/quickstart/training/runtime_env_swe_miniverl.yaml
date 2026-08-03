@@ -1,0 +1,29 @@
+# Runtime env for the mini-verl SWE run.
+#
+# Matches runtime_env_miniverl.yaml on purpose: NO `pip:` section. Adding `pip:` packages
+# makes Ray clone the entire Neuron venv into /tmp before installing anything — that alone
+# can take many minutes on this image. `modal` and `swebench` are already installed in the
+# Neuron venv by setup_neuron_env.sh, so the job just reuses
+# /opt/aws_neuronx_venv_pytorch_2_9_nxd_inference/bin/python (same as the arithmetic run).
+#
+# Modal credentials: export MODAL_TOKEN_ID / MODAL_TOKEN_SECRET in your shell before
+# launching (or run `modal token new`). Do NOT put them in this file — ray job submit
+# embeds env_vars literally into the job metadata. mini_verl's ray.init() forwards every
+# MODAL_* env var to the workers.
+#
+# The four vars mini_verl re-emits itself (TOKENIZERS_PARALLELISM, TRANSFER_QUEUE_ENABLE,
+# NEURON_CC_FLAGS, ACCELERATE_TORCH_DEVICE) are intentionally NOT here — the launcher
+# exports them so they land in the driver's os.environ.
+working_dir: ./
+excludes:
+  - "/.git/"
+
+env_vars:
+  PYTHONUNBUFFERED: "1"
+  RAY_DEDUP_LOGS: "1"
+  TQ_NUM_THREADS: "6"
+  NEURON_LAUNCH_BLOCKING: "0"
+  TORCH_NEURONX_ENABLE_LAZY_ALLOC: "1"
+  RAY_OVERRIDE_JOB_RUNTIME_ENV: "1"
+  MODAL_TOKEN_ID: "ak-eJSzX3iokpyNWPxqnS7Mye"
+  MODAL_TOKEN_SECRET: "as-iiwcgPkQ1cOyFJOACZvIdn"

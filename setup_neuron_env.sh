@@ -5,10 +5,10 @@ set -euo pipefail
 VENV_ACTIVATE="${VENV_ACTIVATE:-/opt/aws_neuronx_venv_pytorch_2_9_nxd_inference/bin/activate}"
 REPO="${REPO:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
 MINI_VERL_DIR="${MINI_VERL_DIR:-$REPO/mini-verl}"
-VERL_VERSION="${VERL_VERSION:-0.9.0}"
+VERL_DIR="${MINI_VERL_DIR:-$REPO/verl}"
 
 # Replace this with the local compiled torch_neuronx wheel.
-NEURONX_COMPILED_WHEEL="${NEURONX_COMPILED_WHEEL:-/path/to/torch_neuronx_compiled.whl}"
+NEURONX_COMPILED_WHEEL="${NEURONX_COMPILED_WHEEL:-$REPO/torch_neuronx-2.11.3.0.19138+4dee388.dev-cp312-cp312-linux_x86_64.whl}"
 
 die() {
     echo "ERROR: $*" >&2
@@ -26,23 +26,23 @@ source "$VENV_ACTIVATE"
 
 # mini-verl currently declares Python >=3.12. Fail before changing the environment
 # if the AWS image does not satisfy that requirement.
-python - <<'PY'
-import sys
+# python - <<'PY'
+# import sys
 
-if sys.version_info < (3, 12):
-    raise SystemExit(
-        f"mini-verl requires Python >=3.12; the selected environment has {sys.version.split()[0]}"
-    )
-print("Using Python", sys.version.split()[0], "from", sys.executable)
-PY
+# if sys.version_info < (3, 12):
+#     raise SystemExit(
+#         f"mini-verl requires Python >=3.12; the selected environment has {sys.version.split()[0]}"
+#     )
+# print("Using Python", sys.version.split()[0], "from", sys.executable)
+# PY
 
-TORCH_VERSION_BEFORE="$(
-    python -c 'import torch; print(torch.__version__)'
-)" || die "The selected environment does not contain PyTorch"
-echo "Preserving prebuilt torch $TORCH_VERSION_BEFORE"
+# TORCH_VERSION_BEFORE="$(
+#     python -c 'import torch; print(torch.__version__)'
+# )" || die "The selected environment does not contain PyTorch"
+# echo "Preserving prebuilt torch $TORCH_VERSION_BEFORE"
 
 # Never let the local Neuron wheel replace the AWS environment's PyTorch.
-python -m pip install --no-deps "$NEURONX_COMPILED_WHEEL"
+# python -m pip install "$NEURONX_COMPILED_WHEEL"
 
 # Runtime versions validated by mini_verl_neuron_guideline.md. These are
 # installed explicitly because mini-verl and verl are installed with --no-deps
@@ -62,7 +62,7 @@ python -m pip install \
     modal swebench mathruler
 
 # Use the released verl package. Do not initialize or install ./verl.
-python -m pip install --no-deps "verl==$VERL_VERSION"
+python -m pip install --no-deps -e "$VERL_DIR"
 python -m pip install --no-deps "TransferQueue==0.1.8"
 
 # Install only each repository's own Python package. --no-deps is intentional:

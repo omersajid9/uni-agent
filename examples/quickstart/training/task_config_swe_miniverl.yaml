@@ -1,0 +1,70 @@
+# Run-wide defaults for SWE-Bench / SWE-reBench on the mini-verl (Trainium) path.
+#
+# This is the Neuron-scaled twin of task_config_react.yaml: same ReAct agent + tools, but with
+# the two token budgets mini-verl's AgenticRollout requires (the GPU recipe omits them because
+# vLLM serves variable-length generation; mini-verl compiles a fixed-shape decode graph).
+#
+#   * max_tokens_per_turn -- the fixed max_new_tokens every compiled generation graph is shaped
+#     to. REQUIRED by AgenticRollout (resolve_token_budgets); without it the run refuses startup.
+#   * max_total_tokens    -- the whole-context cap (prompt + every turn + tool observation so far),
+#     re-measured each turn. Must fit (max_prompt_length + max_response_length - max_tokens_per_turn)
+#     or AgenticRollout refuses startup.
+#
+# Smoke budgets (paired with train_swe_miniverl.sh defaults: 4096+4096=8192 frame,
+# left_align=false, TRAIN_PROMPT_BSZ=1, N_RESP=2):
+#   context = 8192 - 512 = 7680 ≥ max_total_tokens=7168.
+# SWE ReAct initial prompts are ~2k tokens (issue + tool schemas); a 1.5k frame rejects
+# every episode at step 1. 8k dense-attn + batch=2 fits where 12k + batch=4 OOMed. Scale
+# frame + budgets + max_steps together once green. (left_align is a half-implemented
+# feature here — see train_swe_miniverl.sh — so keep it false.)
+#
+# Each preprocessed parquet row carries its own per-sample Task Config (name, sandbox.image,
+# prompt, metadata); TaskConfigResolver deep-merges THIS file onto the sample by name.
+
+- name: swe_bench
+  sandbox:
+    provider: modal          # or docker; the sample row supplies the per-instance `image`
+    runtime_timeout: 7200
+  agent:
+    name: react
+    max_steps: 16
+    tools:
+      - name: stateful_shell
+        command_timeout: 120
+        env_vars:
+          PAGER: "cat"
+          GIT_PAGER: "cat"
+          MANPAGER: "cat"
+          TQDM_DISABLE: "1"
+          PIP_PROGRESS_BAR: "off"
+      - name: str_replace_editor
+      - name: submit
+    model:
+      temperature: 1.0
+      top_p: 1.0
+      max_tokens_per_turn: 512
+      max_total_tokens: 7168
+
+- name: swe_rebench
+  sandbox:
+    provider: modal
+    runtime_timeout: 7200
+  agent:
+    name: react
+    max_steps: 16
+    tools:
+      - name: stateful_shell
+        command_timeout: 120
+        env_vars:
+          PAGER: "cat"
+          GIT_PAGER: "cat"
+          MANPAGER: "cat"
+          TQDM_DISABLE: "1"
+          PIP_PROGRESS_BAR: "off"
+      - name: str_replace_editor
+      - name: submit
+    model:
+      temperature: 1.0
+      top_p: 1.0
+      max_tokens_per_turn: 512
+      max_total_tokens: 7168
