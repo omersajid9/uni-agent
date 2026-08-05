@@ -18,7 +18,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Tool names that end the episode when the policy calls them.
+#: Tool names that end the episode when the policy successfully calls them (a malformed
+#: call -- e.g. arguments that failed to parse -- reports back as an observation like any
+#: other bad call instead of ending the episode).
 _FINISH_TOOLS = {"submit", "finish"}
 
 
@@ -201,7 +203,7 @@ class ReActAgent(Agent):
                         }
                     )
                 return "timeout_limit"
-            if name in _FINISH_TOOLS:
+            if name in _FINISH_TOOLS and tool_result.status == "ok":
                 saw_finish = True
         if saw_finish:
             logger.info("💬 FINISHED: policy called a finish tool.")

@@ -78,9 +78,7 @@ def no_inference_engine(monkeypatch):
 
 
 def test_tool_call_dispatch_returns_text_when_there_is_nothing_to_parse(no_inference_engine):
-    content, calls = no_inference_engine._extract_tool_calls(
-        "plain text", TOOLS, "hermes", FakeTokenizer()
-    )
+    content, calls = no_inference_engine._extract_tool_calls("plain text", TOOLS, "hermes", FakeTokenizer())
 
     assert content == "plain text"
     assert calls == []
@@ -122,6 +120,61 @@ def test_builtin_hermes_parser_drops_a_call_to_a_tool_that_was_not_offered(no_in
 
     assert calls == []
     assert "rm_rf" in content  # left in the message rather than silently executed
+
+
+def test_builtin_hermes_parser_surfaces_a_malformed_payload_instead_of_dropping_it(no_inference_engine):
+    """An early-training policy that garbles its own JSON (bad string escaping here) should get an
+    error it can learn from, not a silently-ended episode."""
+    raw = '<tool_call>\n{"name": "search", "arguments": {"query": "a\\ b"}}\n</tool_call>'
+    content, calls = no_inference_engine._extract_tool_calls(raw, TOOLS, "hermes", FakeTokenizer())
+
+    assert content == ""  # the (still-broken) envelope is treated as an attempted call, not prose
+    assert len(calls) == 1
+    assert calls[0].name == "search"  # recovered even though the JSON as a whole doesn't parse
+    assert "\\ b" in calls[0].arguments  # raw, still-broken text is forwarded as-is
+
+
+def test_builtin_hermes_parser_forwards_an_unrecoverable_name_as_empty(no_inference_engine):
+    content, calls = no_inference_engine._extract_tool_calls(
+        "<tool_call>\nnot even close to json\n</tool_call>",
+        TOOLS,
+        "hermes",
+        FakeTokenizer(),
+    )
+
+    assert content == ""
+    assert len(calls) == 1
+    assert calls[0].name == ""
+    assert calls[0].arguments == "not even close to json"
+
+
+def test_malformed_hermes_call_reaches_toolbox_as_an_actionable_format_error():
+    """End-to-end: the malformed call flows through the real ``Toolbox.call`` path (as the ReAct
+    loop would use it) and comes back as the same corrective observation a valid call with bad
+    arguments would get -- not a silent drop."""
+    import asyncio
+
+    from uni_agent.tools import Tool, Toolbox, ToolResult
+
+    class _Search(Tool):
+        name = "search"
+
+        async def run(self, args, *, timeout=None):
+            return ToolResult(text=f"found: {args}")
+
+    import uni_agent.gateway.session.codec as codec_mod
+
+    content, calls = codec_mod._process_tool_calls_hermes(
+        '<tool_call>\n{"name": "search", "arguments": {"query": "a\\ b"}}\n</tool_call>',
+        TOOLS,
+    )
+    assert len(calls) == 1
+
+    toolbox = Toolbox([_Search(sandbox=object())])
+    result = asyncio.run(toolbox.call(calls[0].name, calls[0].arguments))
+
+    assert result.status == "format_error"
+    assert "Invalid action: could not parse arguments for 'search' as JSON" in result.text
 
 
 @pytest.mark.asyncio

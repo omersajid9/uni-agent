@@ -93,6 +93,26 @@ def _process_tool_calls_vllm(
     return parsed.content or "", [tool_call.function for tool_call in parsed.tool_calls]
 
 
+_HERMES_NAME_RE = re.compile(r'"name"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+def _extract_hermes_call_name(raw_payload: str) -> str:
+    """Best-effort ``"name"`` recovery from a ``<tool_call>`` body that failed to parse as JSON.
+
+    The body as a whole is broken (bad escaping, a stray brace, a hallucinated extra field, ...)
+    but the ``"name"`` field is almost always a clean quoted string near the front, so a small
+    regex recovers enough of it to route the call into :meth:`Toolbox.call`'s existing
+    malformed-argument handling rather than dropping the call outright.
+    """
+    match = _HERMES_NAME_RE.search(raw_payload)
+    if match is None:
+        return ""
+    try:
+        return json.loads(f'"{match.group(1)}"')
+    except json.JSONDecodeError:
+        return match.group(1)
+
+
 def _process_tool_calls_hermes(text: str, tools: list[dict[str, Any]]) -> tuple[str, list[Any]]:
     """Parse the Hermes ``<tool_call>{json}</tool_call>`` envelope with no inference engine.
 
@@ -102,8 +122,13 @@ def _process_tool_calls_hermes(text: str, tools: list[dict[str, Any]]) -> tuple[
     call is still sitting in ``content`` -- the loop then reads "no tool calls" and ends the episode
     after one turn instead of failing, which is the kind of silence that looks like a bad policy.
 
-    Deliberately narrow: exactly the Qwen chat template's envelope, and a call naming a tool that
-    was not offered is dropped rather than passed on.
+    Deliberately narrow: exactly the Qwen chat template's envelope. A call naming a tool that was
+    not offered is dropped rather than passed on. A call whose JSON body fails to parse (a policy
+    still learning the format -- bad string escaping, an extra hallucinated field, mismatched
+    braces) is *not* dropped: it is forwarded with its raw, still-broken text as ``arguments`` so
+    :meth:`Toolbox.call` re-parses it and turns the same error into an "Invalid action: ..."
+    observation. That keeps the episode going and gives the policy a training signal to correct
+    its formatting instead of the turn silently reading as "no tool call" and ending the episode.
     """
     offered = {
         (tool.get("function") or {}).get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
@@ -111,10 +136,12 @@ def _process_tool_calls_hermes(text: str, tools: list[dict[str, Any]]) -> tuple[
     }
     calls = []
     for match in re.finditer(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", text, re.DOTALL):
+        raw_payload = match.group(1)
         try:
-            payload = json.loads(match.group(1))
+            payload = json.loads(raw_payload)
         except json.JSONDecodeError:
-            logger.warning("hermes tool-call payload is not valid JSON; skipping it")
+            logger.warning("hermes tool-call payload is not valid JSON; surfacing the parse error to the model")
+            calls.append(SimpleNamespace(name=_extract_hermes_call_name(raw_payload), arguments=raw_payload))
             continue
         name = payload.get("name")
         if name not in offered:
