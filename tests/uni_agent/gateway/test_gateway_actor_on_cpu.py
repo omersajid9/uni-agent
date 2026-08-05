@@ -811,7 +811,7 @@ async def test_gateway_actor_continuation_with_tool_returned_image_appends_media
     from uni_agent.gateway.gateway import _GatewayActor
     from verl.utils.tokenizer.chat_template import apply_chat_template, initialize_system_prompt
 
-    monkeypatch.setattr(codec_mod, "_extract_tool_calls_with_sglang_or_vllm", fake_tool_call_dispatch)
+    monkeypatch.setattr(codec_mod, "_extract_tool_calls", fake_tool_call_dispatch)
     processor = FakeProcessor()
     tool_call_text = '<tool_call>\n{"name": "search", "arguments": {"query": "crop"}}\n</tool_call>'
     actor = _GatewayActor(
@@ -1343,7 +1343,7 @@ async def test_gateway_actor_tool_call_decode_returns_openai_format(monkeypatch)
     from uni_agent.gateway.config import GatewayActorConfig
     from uni_agent.gateway.gateway import _GatewayActor
 
-    monkeypatch.setattr(codec_mod, "_extract_tool_calls_with_sglang_or_vllm", fake_tool_call_dispatch)
+    monkeypatch.setattr(codec_mod, "_extract_tool_calls", fake_tool_call_dispatch)
     tool_call_text = '<tool_call>\n{"name": "search", "arguments": {"query": "weather"}}\n</tool_call>'
     actor = _GatewayActor(
         GatewayActorConfig(
@@ -1466,7 +1466,7 @@ async def test_anthropic_tool_turn_round_trip_extends_not_reencodes(monkeypatch)
     from uni_agent.gateway.config import GatewayActorConfig
     from uni_agent.gateway.gateway import _GatewayActor
 
-    monkeypatch.setattr(codec_mod, "_extract_tool_calls_with_sglang_or_vllm", fake_tool_call_dispatch)
+    monkeypatch.setattr(codec_mod, "_extract_tool_calls", fake_tool_call_dispatch)
     tool_call_text = '<tool_call>\n{"name": "search", "arguments": {"query": "weather"}}\n</tool_call>'
     actor = _GatewayActor(
         GatewayActorConfig(
