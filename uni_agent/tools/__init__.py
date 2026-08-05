@@ -30,7 +30,7 @@ from .base import (
 )
 
 # Built-in tools self-register on import; keep these imports for that side effect.
-from . import edit_file, finish, shell, submit  # noqa: F401
+from . import calculator, edit_file, finish, shell, submit  # noqa: F401
 
 __all__ = [
     "Tool",
