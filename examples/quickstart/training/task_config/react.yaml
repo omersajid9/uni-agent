@@ -1,10 +1,10 @@
 - name: swe_bench
   sandbox:
-    provider: modal
+    provider: modal          # or docker; the sample row supplies the per-instance `image`
     runtime_timeout: 7200
   agent:
     name: react
-    max_steps: 200
+    max_steps: 16
     tools:
       - name: stateful_shell
         command_timeout: 120
@@ -19,7 +19,8 @@
     model:
       temperature: 1.0
       top_p: 1.0
-      max_total_tokens: 131072
+      max_tokens_per_turn: 512
+      max_total_tokens: 7168
 
 - name: swe_rebench
   sandbox:
@@ -27,7 +28,7 @@
     runtime_timeout: 7200
   agent:
     name: react
-    max_steps: 200
+    max_steps: 16
     tools:
       - name: stateful_shell
         command_timeout: 120
@@ -42,4 +43,5 @@
     model:
       temperature: 1.0
       top_p: 1.0
-      max_total_tokens: 131072
+      max_tokens_per_turn: 512
+      max_total_tokens: 7168
