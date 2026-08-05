@@ -1,31 +1,33 @@
 #!/usr/bin/env bash
-# Trainium / CPU agentic GRPO on SWE-reBench (train) / SWE-Bench Verified (val) via mini-verl.
+# Trainium / CPU agentic GRPO on SWE-Bench Verified via mini-verl.
 #
-# This is the SWE twin of train_arithmetic_miniverl.sh
+# This is the SWE twin of train_arithmetic_miniverl.sh. It mirrors the tuning knobs exposed by
+# mini-verl/run_neuron.sh so the agentic path can leverage the same optimizations: tensor
+# parallelism (TP), actor sequence parallelism (SP), colocate, and the NKI prefill-flash kernel.
+# Defaults are intentionally conservative (tp=1, sp=1, colocate=false) so existing commands keep
+# working; set COLOCATE=true and ACTOR_TP_SIZE / ROLLOUT_TP_SIZE / ACTOR_SP_SIZE to opt into them.
 
 set -xeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "${REPO_ROOT}"
 
-echo "${REPO_ROOT}";
-exit;
-
 project_name=${PROJECT_NAME:-"Uni-Agent-swe-miniverl"}
 exp_name=${EXP_NAME:-"$(date +%Y%m%d%H)_exp"}
 
-MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen2.5-0.5B-Instruct"}
+# MODEL_PATH=${MODEL_PATH:-"Qwen3.5-4B"}
+MODEL_PATH=${MODEL_PATH:-"Qwen/Qwen3-1.7B"}
 # Run-wide task base (agent + sandbox + sampling), same schema as the GPU recipes.
 TASK_CONFIG=${TASK_CONFIG:-"examples/quickstart/training/task_config/react.yaml"}
 RUNTIME_ENV=${RUNTIME_ENV:-"examples/quickstart/training/mini-verl/runtime_env.yaml"}
 TOOL_PARSER=${TOOL_PARSER:-"hermes"}
 
-# Data: the preprocessed SWE parquet. Train on swe_rebench, validate on swe_bench_verified.
+# Data: the preprocessed SWE parquet. Train on swe_bench_verified.
 # Run setup_swe_data.sh once to materialize these.
 DATA_DIR=${DATA_DIR:-"${HOME}/uni-agent-data/data/uni_agent"}
-TRAIN_FILE=${TRAIN_FILE:-"${DATA_DIR}/swe_rebench_filtered.parquet"}
+TRAIN_FILE=${TRAIN_FILE:-"${DATA_DIR}/swe_bench_verified.parquet"}
 # Which task family the parquet rows belong to — must match a `name` entry in TASK_CONFIG.
-TASK_NAME=${TASK_NAME:-"swe_rebench"}
+TASK_NAME=${TASK_NAME:-"swe_bench"}
 
 AGENT_LOG_DIR=${AGENT_LOG_DIR:-"${REPO_ROOT}/logs/${project_name}/${exp_name}"}
 mkdir -p "${AGENT_LOG_DIR}"
@@ -53,6 +55,23 @@ gen_batch_size=${GEN_BATCH_SIZE:-1}
 ppo_micro_batch_size=${PPO_MICRO_BATCH_SIZE:-1}
 weight_sync_channel=${WEIGHT_SYNC_CHANNEL:-global_allreduce}
 
+# Parallelism knobs. Default to the old conservative (tp=1, sp=1, disaggregated) recipe.
+# On a trn2.3xlarge (4 logical NeuronCores x 24 GiB) try colocate=true with tp=2/sp=2/fsdp=1.
+COLOCATE=${COLOCATE:-false}
+TP_SIZE=${TP_SIZE:-1}
+ACTOR_SP_SIZE=${ACTOR_SP_SIZE:-1}
+FSDP_STRATEGY=${FSDP_STRATEGY:-fsdp2}
+# In colocate mode actor and rollout must share the same rank count and TP size; the rollout uses
+# the actor's TP size. Disaggregated mode can in theory run different TP sizes, but matched-TP
+# global_allreduce requires actor_tp == rollout_tp, so default them to the same value.
+ACTOR_TP_SIZE=${ACTOR_TP_SIZE:-${TP_SIZE}}
+ROLLOUT_TP_SIZE=${ROLLOUT_TP_SIZE:-${TP_SIZE}}
+
+# Neuron NKI-flash prefill: free memory/compute win for long prompts; safe on CPU too (delegates to
+# sdpa). Requires (max_prompt + max_response) % 512 == 0 and prefill_chunk_size % 128 == 0.
+USE_PREFILL_FLASH=${USE_PREFILL_FLASH:-true}
+PREFILL_CHUNK_SIZE=${PREFILL_CHUNK_SIZE:-512}
+
 for f in "${TASK_CONFIG}" "${TRAIN_FILE}"; do
   if [[ ! -f "${f}" ]]; then
     echo "ERROR: not found: ${f}" >&2
@@ -65,11 +84,12 @@ export TOKENIZERS_PARALLELISM=false
 export TRANSFER_QUEUE_ENABLE=1
 export NEURON_CC_FLAGS="--model-type transformer"
 export ACCELERATE_TORCH_DEVICE=neuron
+export NEURON_RT_VISIBLE_CORES="0-${ACTOR_CORES:-1}"
 
 ray job submit --no-wait --runtime-env "${RUNTIME_ENV}" \
     -- python3 -m mini_verl.run \
     device="${DEVICE}" \
-    colocate=false \
+    colocate="${COLOCATE}" \
     model.path="${MODEL_PATH}" \
     model.dtype="${MODEL_DTYPE}" \
     model.attn_implementation="${ATTN_IMPL}" \
@@ -89,10 +109,14 @@ ray job submit --no-wait --runtime-env "${RUNTIME_ENV}" \
     rollout.n="${n_resp_per_prompt}" \
     rollout.temperature="${temperature}" \
     rollout.top_p="${top_p}" \
+    rollout.use_prefill_flash="${USE_PREFILL_FLASH}" \
+    rollout.prefill_chunk_size="${PREFILL_CHUNK_SIZE}" \
     rollout.parallel.procs_per_node="${rollout_cores}" \
-    rollout.parallel.tp_size=1 \
+    rollout.parallel.tp_size="${ROLLOUT_TP_SIZE}" \
     actor.parallel.procs_per_node="${actor_cores}" \
-    actor.parallel.tp_size=1 \
+    actor.parallel.tp_size="${ACTOR_TP_SIZE}" \
+    actor.parallel.sp_size="${ACTOR_SP_SIZE}" \
+    actor.fsdp_strategy="${FSDP_STRATEGY}" \
     actor.ppo_micro_batch_size="${ppo_micro_batch_size}" \
     actor.log_prob_micro_batch_size="${ppo_micro_batch_size}" \
     actor.use_kl_loss="${use_kl_loss}" \

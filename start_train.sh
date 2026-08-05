@@ -11,14 +11,18 @@ export DEVICE
 
 case "${DEVICE}" in
   neuron)
-    N_RESP_PER_PROMPT=1 \
-    ACTOR_CORES=2 \
-    ROLLOUT_CORES=2 \
-    TRAIN_PROMPT_BSZ=1 \
-    PPO_MICRO_BATCH_SIZE=1 \
-    CONCURRENCY=1 \
-    WEIGHT_SYNC_CHANNEL=global_allreduce \
-    TOTAL_STEPS=20 \
+    COLOCATE=true \
+    TP_SIZE=2 \
+    ACTOR_SP_SIZE=2 \
+    FSDP_STRATEGY=simple_fsdp \
+    ACTOR_CORES=4 \
+    ROLLOUT_CORES=4 \
+    MAX_PROMPT_LENGTH=4096 \
+    MAX_RESPONSE_LENGTH=4096 \
+    TRAIN_PROMPT_BSZ=8 \
+    N_RESP_PER_PROMPT=4 \
+    GEN_BATCH_SIZE=4 \
+    TOTAL_STEPS=10 \
     bash examples/quickstart/training/mini-verl/train_swe_miniverl.sh
     ;;
   gpu)
