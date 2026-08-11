@@ -16,6 +16,8 @@ from verl.utils.tokenizer import normalize_token_ids
 from verl.utils.tokenizer.chat_template import apply_chat_template as _apply_chat_template
 from verl.utils.tokenizer.chat_template import initialize_turn_separator
 
+from uni_agent.gateway.session.builtin_tool_parsers import extract_tool_calls_with_builtin_fallback
+
 logger = logging.getLogger("gateway")
 
 # Map backend stop_reason values into the gateway's internal finish_reason vocabulary.
@@ -335,11 +337,12 @@ class MessageCodec:
         """Decode model output tokens into an assistant message and finish reason."""
         if self._tool_parser_name and tools:
             response_text = self._tokenizer.decode(response_ids, skip_special_tokens=False)
-            content, function_calls = _extract_tool_calls_with_sglang_or_vllm(
+            content, function_calls = extract_tool_calls_with_builtin_fallback(
                 response_text,
                 tools,
                 self._tool_parser_name,
                 self._tokenizer,
+                _extract_tool_calls_with_sglang_or_vllm,
             )
             if function_calls:
                 tool_calls = [
