@@ -1,0 +1,28 @@
+# Run-wide task defaults for the single-node 4B SWE recipe: a five-tool
+# (read/write/edit/glob/bash) Claude-Code-style harness over SWE sandboxes.
+# Each dataset row is deep-merged onto the entry matching its task name.
+- name: swe_rebench
+  sandbox:
+    provider: vefaas
+    runtime_timeout: 7200
+  agent:
+    name: claude_code
+    max_turns: 150
+    run_timeout: 4800
+    model:
+      temperature: 1.0
+      top_p: 1.0
+      max_total_tokens: 65536
+
+- name: swe_bench
+  sandbox:
+    provider: vefaas
+    runtime_timeout: 7200
+  agent:
+    name: claude_code
+    max_turns: 150
+    run_timeout: 4800
+    model:
+      temperature: 1.0
+      top_p: 1.0
+      max_total_tokens: 65536

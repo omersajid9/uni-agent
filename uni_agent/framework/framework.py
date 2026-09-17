@@ -29,6 +29,7 @@ from verl.utils.model import compute_position_id_with_mask
 from verl.utils.transferqueue_utils import tq
 
 from .base import AgentFramework
+from .length_penalty import LengthPenaltyConfig, apply_length_penalty
 from .multi_modal_postprocess import compute_multi_modal_inputs, compute_position_ids
 
 logger = logging.getLogger(__name__)
@@ -296,6 +297,7 @@ class OpenAICompatibleAgentFramework(AgentFramework):
         rollout_config=None,
         log_dir: str | None = None,
         mask_unfinished_episode: bool = False,
+        length_penalty: LengthPenaltyConfig | None = None,
     ):
         self.gateway_manager = gateway_manager
         self.runner_registry = runner_registry
@@ -313,6 +315,7 @@ class OpenAICompatibleAgentFramework(AgentFramework):
         self._semaphore_loop: asyncio.AbstractEventLoop | None = None
         self._log_dir = log_dir
         self._mask_unfinished_episode = mask_unfinished_episode
+        self._length_penalty = length_penalty
 
     @classmethod
     def from_config(
@@ -354,6 +357,7 @@ class OpenAICompatibleAgentFramework(AgentFramework):
             rollout_config=config.actor_rollout_ref.rollout,
             log_dir=log_dir,
             mask_unfinished_episode=mask_unfinished_episode,
+            length_penalty=LengthPenaltyConfig.from_config(af_cfg),
         )
 
     def _build_session_sampling_params(
@@ -729,6 +733,8 @@ class OpenAICompatibleAgentFramework(AgentFramework):
                     )
                     for traj, (score, extra) in zip(session_trajectories, annotations, strict=True)
                 ]
+                if self._length_penalty is not None:
+                    result_trajectories = apply_length_penalty(result_trajectories, self._length_penalty)
 
             self._log_trajectory_summary(session_id, result_trajectories)
             if run_dir is not None:
