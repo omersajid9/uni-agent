@@ -14,11 +14,12 @@ class _Traj:
 
     reward_score: float
     response_mask: list = field(default_factory=list)
-    reward_info: dict = field(default_factory=dict)
+    finished: bool | None = True
+    reward_metrics: dict = field(default_factory=dict)
 
 
 def _traj(reward, num_tokens, finished=True):
-    return _Traj(reward_score=reward, response_mask=[1] * num_tokens, reward_info={"finished": finished})
+    return _Traj(reward_score=reward, response_mask=[1] * num_tokens, finished=finished)
 
 
 CONFIG = LengthPenaltyConfig(free_tokens=100, alpha=0.1)
@@ -41,6 +42,12 @@ def test_failures_are_never_shaped():
 def test_correct_but_truncated_gets_partial_credit():
     shaped = apply_length_penalty([_traj(1.0, 10_000, finished=False)], CONFIG)[0].reward_score
     assert shaped == 0.5
+
+
+def test_unknown_completion_is_shaped_as_a_success():
+    """`finished` is tri-state; None means unknown, which must not read as truncated."""
+    shaped = apply_length_penalty([_traj(1.0, 300, finished=None)], CONFIG)[0].reward_score
+    assert shaped == pytest.approx(1.0 - 0.1 * math.log(3.0))
 
 
 def test_disabled_by_default_and_requires_a_budget():

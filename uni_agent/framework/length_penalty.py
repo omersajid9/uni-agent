@@ -9,10 +9,11 @@ long-horizon SWE policy drifts toward rambling trajectories. This shapes only
 
 ``n`` counts model-generated tokens (reasoning + text + tool calls, excluding tool
 observations), which is exactly the trajectory's response mask. A trajectory that
-scored but never terminated is credited ``truncated_reward`` instead: it solved the
-task without committing to an answer, so it is neither a clean success nor a failure.
+scored but never terminated (``finished is False``) is credited ``truncated_reward``
+instead: it solved the task without committing to an answer, so it is neither a clean
+success nor a failure. ``finished is None`` means "unknown" and is left unshaped.
 
-Failures stay at their unshaped reward, and ``reward_extra_info`` is left alone --
+Failures stay at their unshaped reward, and ``reward_metrics`` is left alone --
 group filtering (see :mod:`uni_agent.taskpilot.sampler`) therefore keeps banding on
 raw pass/fail rather than on shaped reward.
 """
@@ -65,7 +66,7 @@ def apply_length_penalty(trajectories: list, config: LengthPenaltyConfig) -> lis
         if reward is None or reward <= 0:
             shaped.append(traj)
             continue
-        if traj.reward_info.get("finished") is False:
+        if traj.finished is False:
             reward = config.truncated_reward
         else:
             num_tokens = sum(traj.response_mask) if traj.response_mask else 0

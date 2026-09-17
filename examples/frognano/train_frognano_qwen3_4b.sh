@@ -62,6 +62,12 @@ MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-57344}"
 MAX_MODEL_LEN=$((MAX_PROMPT_LENGTH + MAX_RESPONSE_LENGTH))
 PPO_MAX_TOKEN_LEN_PER_GPU="${PPO_MAX_TOKEN_LEN_PER_GPU:-$((MAX_MODEL_LEN / ULYSSES_SP))}"
 
+# reward.custom_reward_function is deliberately left unset. Setting it would route
+# scoring through a RewardLoopWorker, which re-derives the score from the raw
+# TaskResult; unset, the framework takes reward_source=agent_runner and the length
+# penalty below stays authoritative over rm_scores. Either way reward_metrics keeps
+# the raw acc, which is what TaskPilot bands on.
+
 # Success-gated log-length penalty; the paper turns it on from iteration 3.
 LENGTH_PENALTY_ENABLE="${LENGTH_PENALTY_ENABLE:-$([[ ${ITERATION} -ge 3 ]] && echo True || echo False)}"
 LENGTH_PENALTY_FREE_TOKENS="${LENGTH_PENALTY_FREE_TOKENS:-24576}"
@@ -158,8 +164,6 @@ fi
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.trajectory_selection=longest \
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.task_config_path="${TASK_CONFIG}" \
     ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.model_name="${SERVED_MODEL_NAME}" \
-    ++actor_rollout_ref.rollout.custom.agent_framework.agent_runners.task.runner_kwargs.report_reward=True \
-    ++actor_rollout_ref.rollout.custom.agent_framework.use_reward_loop_worker=False \
     ++actor_rollout_ref.rollout.custom.agent_framework.mask_unfinished_episode=False \
     ++actor_rollout_ref.rollout.custom.agent_framework.length_penalty.enable="${LENGTH_PENALTY_ENABLE}" \
     ++actor_rollout_ref.rollout.custom.agent_framework.length_penalty.free_tokens="${LENGTH_PENALTY_FREE_TOKENS}" \

@@ -102,6 +102,14 @@ Any SWE dataset in Uni-Agent parquet format works, e.g.
 `python -m uni_agent.tasks.swe_rebench.preprocess --local-save-dir ~/data/frognano`.
 Synthetic candidates (generated issue + gold patch + hidden tests) belong in the
 same format; validate them first with
-`examples/inference/parallel_verify_swe.py`, which runs each row in oracle mode
-and checks that the gold patch makes the F2P tests pass without breaking P2P.
-Only rows that pass that gate are worth calibrating.
+
+```bash
+python examples/inference/parallel_run_oracle.py \
+    --data-path ~/data/frognano/candidates.parquet \
+    --task-config examples/frognano/task_config_leaf.yaml \
+    --result-path ~/data/frognano/oracle.json
+```
+
+which runs each row in oracle mode (`run_oracle_solution=True`) and checks that the
+gold patch makes the F2P tests pass without breaking P2P. Only rows that pass that
+gate are worth calibrating.
