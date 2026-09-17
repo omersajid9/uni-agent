@@ -1,0 +1,24 @@
+# TaskPilot target bands: which rollout solve rates count as trainable, per iteration.
+#
+# Read by uni_agent.taskpilot.sampler.TaskPilotSampler (online, per training step)
+# and by `python -m uni_agent.taskpilot.calibrate` (offline, between iterations).
+#
+# - target_resolve_rate: soft preference. The whole learnable region 0 < p̂ < 1 stays
+#   eligible; when more groups are in-band than the batch needs, those closest to the
+#   target fill it first.
+# - min_exclusive / max_inclusive: hard filter. Groups outside are evicted and replaced
+#   with fresh prompts before the update is formed.
+taskpilot:
+  # Per-trajectory reward key averaged into p̂. `acc` is the raw resolved flag that
+  # uni_agent tasks report, so reward shaping never moves a group across the band.
+  metric: acc
+
+  # Default iteration; the training script overrides it with ITERATION=<k>.
+  iteration: 1
+
+  target_band:
+    iterations_1_to_4:
+      target_resolve_rate: 0.5
+    iteration_5:
+      min_exclusive: 0.0
+      max_inclusive: 0.5

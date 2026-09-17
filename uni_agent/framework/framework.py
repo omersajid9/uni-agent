@@ -33,6 +33,7 @@ from verl.utils.model import compute_position_id_with_mask
 from verl.utils.transferqueue_utils import tq
 
 from .base import AgentFramework
+from .length_penalty import LengthPenaltyConfig, apply_length_penalty
 from .multi_modal_postprocess import compute_multi_modal_inputs, compute_position_ids
 
 logger = logging.getLogger(__name__)
@@ -320,6 +321,7 @@ class GatewayAgentFramework(AgentFramework):
         mask_unfinished_episode: bool = False,
         trajectory_postprocessor: TrajectoryPostprocessor | None = None,
         trajectory_postprocessor_kwargs: dict[str, object] | None = None,
+        length_penalty: LengthPenaltyConfig | None = None,
     ):
         self.gateway_manager = gateway_manager
         self.runner_registry = runner_registry
@@ -342,6 +344,7 @@ class GatewayAgentFramework(AgentFramework):
         self._mask_unfinished_episode = mask_unfinished_episode
         self._trajectory_postprocessor = trajectory_postprocessor
         self._trajectory_postprocessor_kwargs = trajectory_postprocessor_kwargs or {}
+        self._length_penalty = length_penalty
 
     @classmethod
     def from_config(
@@ -425,6 +428,7 @@ class GatewayAgentFramework(AgentFramework):
             mask_unfinished_episode=mask_unfinished_episode,
             trajectory_postprocessor=trajectory_postprocessor,
             trajectory_postprocessor_kwargs=trajectory_postprocessor_kwargs,
+            length_penalty=LengthPenaltyConfig.from_config(af_cfg),
         )
 
     async def _apply_trajectory_postprocessor(
@@ -919,6 +923,13 @@ class GatewayAgentFramework(AgentFramework):
                     )
                     for traj, (score, extra) in zip(session_trajectories, annotations, strict=True)
                 ]
+
+            # Shape after both reward paths: rm_scores is materialized from
+            # Trajectory.reward_score, so this stays authoritative whether the score
+            # came from the managed runner or from a RewardLoopWorker. reward_metrics
+            # is left untouched, so band filtering still sees raw pass/fail.
+            if self._length_penalty is not None:
+                result_trajectories = apply_length_penalty(result_trajectories, self._length_penalty)
 
             self._log_trajectory_summary(session_id, result_trajectories)
             if run_dir is not None:
